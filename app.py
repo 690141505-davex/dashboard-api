@@ -1,0 +1,339 @@
+#!/usr/bin/env python3
+"""
+盯盘仪表盘 - 云部署版本
+支持 Railway、Heroku、Render 等平台
+"""
+
+import os
+import json
+import time
+import datetime
+import random
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from urllib.request import urlopen, Request
+from urllib.error import URLError
+import ssl
+import threading
+
+PORT = int(os.environ.get("PORT", 8000))
+HOST = "0.0.0.0"
+
+# ── 股票池 ──
+STOCK_POOL = [
+    ("sh000001", "上证指数",   "A股",   "idx"),
+    ("sz399001", "深证成指",   "A股",   "idx"),
+    ("sz399006", "创业板指",   "A股",   "idx"),
+    ("sh000300", "沪深300",    "A股",   "idx"),
+    ("hkHSI",    "恒生指数",   "港股",  "idx"),
+    ("hkHSCE",   "恒生国企",   "港股",  "idx"),
+    ("gb_IXIC",  "纳斯达克",   "美股",  "idx"),
+    ("gb_DJI",   "道琼斯",     "美股",  "idx"),
+    ("gb_INX",   "标普500",    "美股",  "idx"),
+    ("gb_nvda",  "英伟达",     "美股",  "stk"),
+    ("gb_aapl",  "苹果",       "美股",  "stk"),
+    ("gb_tsla",  "特斯拉",     "美股",  "stk"),
+    ("gb_googl", "谷歌A类股",  "美股",  "stk"),
+    ("hk00700",  "腾讯控股",   "港股",  "stk"),
+    ("sz000993", "闽东电力",   "A股",   "stk"),
+    ("sh603601", "再升科技",   "A股",   "stk"),
+    ("sz002182", "宝武镁业",   "A股",   "stk"),
+    ("sz000338", "潍柴动力",   "A股",   "stk"),
+    ("hk00883",  "中国海洋石油", "港股",  "stk"),
+    ("hk00100",  "MINIMAX",    "港股",  "stk"),
+    ("hk02526",  "德适-B",     "港股",  "stk"),
+    ("gb_gc=f",  "黄金COMEX",  "商品",  "cmd"),
+    ("gb_si=f",  "白银",       "商品",  "cmd"),
+    ("gb_cl=f",  "WTI原油",    "商品",  "cmd"),
+    ("gb_hg=f",  "铜",         "商品",  "cmd"),
+]
+
+def sf(v, default=0.0):
+    try:
+        return float(v)
+    except:
+        return default
+
+# ── 新浪行情 ──
+def fetch_sina_stocks():
+    codes = [c for c, *_ in STOCK_POOL]
+    sina_codes = ",".join(codes)
+    url = f"https://hq.sinajs.cn/list={sina_codes}"
+    headers = {
+        "Referer": "https://finance.sina.com.cn",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+    }
+    try:
+        req = Request(url, headers=headers)
+        ctx = ssl.create_default_context()
+        with urlopen(req, timeout=10, context=ctx) as resp:
+            text = resp.read().decode("gbk", errors="replace")
+        return parse_sina(text, codes)
+    except Exception as e:
+        print(f"[新浪行情] {e}")
+        return []
+
+def parse_sina(text, codes):
+    import re
+    results = []
+    pool = {c: (n, m, t) for c, n, m, t in STOCK_POOL}
+    
+    for line in text.strip().split("\n"):
+        m = re.search(r'hq_str_(\w+)="([^"]*)"', line)
+        if not m:
+            continue
+        sc, raw = m.group(1), m.group(2)
+        parts = raw.split(",")
+        if len(parts) < 6:
+            continue
+        
+        pE = pool.get(sc)
+        if not pE:
+            continue
+        oN, mk, ty = pE
+        
+        price = chg = chgPct = 0
+        lc = sc.lower()
+        
+        if lc in ("inx", "ixic", "dji"):
+            price = sf(parts[1])
+            chg = sf(parts[2])
+            chgPct = sf(parts[3])
+        elif lc in ("nvda", "aapl", "tsla", "googl", "gc=f", "si=f", "cl=f", "hg=f"):
+            price = sf(parts[1])
+            chg = sf(parts[2])
+            chgPct = sf(parts[4])
+        elif sc.startswith("hk"):
+            price = sf(parts[3])
+            prev = sf(parts[4])
+            if prev:
+                chg = price - prev
+                chgPct = (chg / prev * 100)
+        else:
+            price = sf(parts[3])
+            prev = sf(parts[4])
+            if prev:
+                chg = price - prev
+                chgPct = (chg / prev * 100)
+        
+        # 信号
+        if chgPct > 2:
+            sig, st = "sb", "强势买入"
+        elif chgPct > 0.5:
+            sig, st = "bu", "谨慎买入"
+        elif chgPct < -2:
+            sig, st = "ss", "注意止损"
+        elif chgPct < -0.5:
+            sig, st = "sl", "减仓观望"
+        else:
+            sig, st = "hd", "观望"
+        
+        results.append({
+            "code": sc,
+            "n": parts[0] or oN,
+            "m": mk,
+            "t": ty,
+            "p": round(price, 2) if price else None,
+            "c": round(chg, 2),
+            "cp": round(chgPct, 2),
+            "sg": sig,
+            "st": st,
+        })
+        time.sleep(0.05)
+    
+    return results
+
+# ── 板块 ──
+def fetch_sectors():
+    url = "https://vip.stock.finance.sina.com.cn/q/view/newFLJK.php?param=class"
+    headers = {"Referer": "https://finance.sina.com.cn", "User-Agent": "Mozilla/5.0"}
+    try:
+        req = Request(url, headers=headers)
+        ctx = ssl.create_default_context()
+        with urlopen(req, timeout=10, context=ctx) as resp:
+            text = resp.read().decode("gbk", errors="replace")
+        return parse_sectors(text)
+    except Exception as e:
+        print(f"[板块] {e}")
+        return []
+
+def parse_sectors(text):
+    import re
+    m = re.search(r"=\s*(\{.*\})", text, re.DOTALL)
+    if not m:
+        return []
+    items = []
+    raw = m.group(1).strip()
+    pattern = re.compile(r'"([^"]+)":"([^"]+)"')
+    groups = {}
+    for key, val in pattern.findall(raw):
+        groups[key] = val
+    for key, val in groups.items():
+        parts = val.split(",")
+        if len(parts) < 6:
+            continue
+        try:
+            chg = float(parts[5])
+        except:
+            continue
+        name = parts[1]
+        if not name:
+            continue
+        lead = parts[-1] if parts[-1] else (parts[9] if len(parts) > 9 else "")
+        items.append({
+            "n": name,
+            "cp": round(chg, 2),
+            "l": "ht" if chg > 3 else "wr" if chg > 1 else "nm",
+            "lead": lead,
+        })
+    items.sort(key=lambda x: x["cp"], reverse=True)
+    return items[:20]
+
+# ── 东方财富港股 ──
+def fetch_em_hk(code, name):
+    url = f"https://push2.eastmoney.com/api/qt/stock/get?secid=116.{code}&fields=f43,f58,f169,f170"
+    headers = {"Referer": "https://quote.eastmoney.com/", "User-Agent": "Mozilla/5.0"}
+    try:
+        req = Request(url, headers=headers)
+        ctx = ssl.create_default_context()
+        with urlopen(req, timeout=8, context=ctx) as resp:
+            data = json.loads(resp.read())
+        d = data.get("data", {})
+        if not d or not d.get("f43"):
+            return None
+        price = d.get("f43", 0) / 1000
+        chg = d.get("f169", 0) / 1000
+        cp = d.get("f170", 0) / 100
+        if cp > 2:
+            sig, st = "sb", "强势买入"
+        elif cp > 0.5:
+            sig, st = "bu", "谨慎买入"
+        elif cp < -2:
+            sig, st = "ss", "注意止损"
+        elif cp < -0.5:
+            sig, st = "sl", "减仓观望"
+        else:
+            sig, st = "hd", "观望"
+        return {
+            "code": "hk" + code,
+            "n": d.get("f58", name),
+            "m": "港股",
+            "t": "stk",
+            "p": round(price, 2),
+            "c": round(chg, 2),
+            "cp": round(cp, 2),
+            "sg": sig,
+            "st": st,
+        }
+    except Exception as e:
+        print(f"[EM港股 {code}] {e}")
+        return None
+
+# ── 快讯 ──
+def gen_news():
+    now = datetime.datetime.now()
+    ts = now.strftime("%H:%M")
+    h = now.hour
+    pool = [
+        "DeepSeek/国产大模型持续发酵，算力需求爆发式增长",
+        "消费电子板块走强，AI手机换机潮预期持续升温",
+        "新能源储能板块反弹，政策+订单双轮驱动",
+        "市场成交额有所放大，结构性行情延续",
+        "南向资金持续净买入，腾讯、阿里获机构青睐",
+        "恒生科技震荡上行，互联网龙头估值修复进行中",
+        "内房股企稳，政策托底信号持续释放",
+        "英伟达Blackwell芯片需求超预期，AI产业链持续受益",
+        "特斯拉自动驾驶出租车商业化加速推进",
+        "美联储降息预期升温，科技股估值支撑较强",
+        "COMEX黄金高位震荡，避险需求提供下方支撑",
+        "WTI原油突破80美元，OPEC+减产持续推进",
+        "铜价回调，新能源需求长期支撑逻辑仍在",
+        "央行逆回购净投放，维护流动性合理充裕",
+        "OpenAI/Anthropic竞争加剧，AI应用端持续爆发",
+    ]
+    random.seed(h * 60 + now.minute)
+    selected = random.sample(pool, min(8, len(pool)))
+    random.seed()
+    type_fn = lambda t: "ps" if any(k in t for k in ["涨", "强", "净买入", "反弹", "突破", "超预期"]) else \
+                        "ng" if any(k in t for k in ["跌", "回调", "减", "净流出", "风险"]) else "ne"
+    return [{"tp": type_fn(t), "t": t, "ts": ts} for t in selected]
+
+# ── 建议 ──
+def gen_advice(stocks):
+    now = datetime.datetime.now()
+    ts = now.strftime("%H:%M")
+    a_idx = [s for s in stocks if s["m"] == "A股" and s["t"] == "idx" and s["p"]]
+    avg = sum(s["cp"] for s in a_idx) / len(a_idx) if a_idx else 0
+    r = []
+    if avg > 1.5:
+        r.append({"tp": "bu", "t": f"【A股整体】三大指数强势上涨+{avg:.2f}%，趋势向好，可适度加仓顺势而为", "ts": ts})
+    elif avg > 0.3:
+        r.append({"tp": "hd", "t": "【A股整体】市场偏强震荡，结构性机会为主，建议轻仓布局主线板块", "ts": ts})
+    elif avg < -1.5:
+        r.append({"tp": "sl", "t": f"【A股整体】指数大幅回落{avg:.2f}%，注意控制仓位，等待企稳信号", "ts": ts})
+    else:
+        r.append({"tp": "hd", "t": "【A股整体】市场震荡整理，观望为主，控制仓位", "ts": ts})
+    strong = [s for s in stocks if s["sg"] in ("sb", "bu") and s["t"] == "stk"]
+    if strong:
+        names = "、".join(f"{s['n']}({'+' if s['cp']>0 else ''}{s['cp']:.2f}%)" for s in strong[:3])
+        r.append({"tp": "bu", "t": f"【个股机会】强势信号：{names}，可逢低关注", "ts": ts})
+    danger = [s for s in stocks if s["sg"] in ("ss", "sl") and s["t"] == "stk"]
+    if danger:
+        names = "、".join(f"{s['n']}({'+' if s['cp']>0 else ''}{s['cp']:.2f}%)" for s in danger[:3])
+        r.append({"tp": "sl", "t": f"【风险提示】弱势信号：{names}，注意止损或减仓", "ts": ts})
+    return r
+
+# ── HTTP 服务 ──
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/api/stocks":
+            stocks = fetch_sina_stocks()
+            # 补充东方财富港股
+            for code, name, m, t in STOCK_POOL:
+                if code in ("hk00100", "hk02526"):
+                    em = fetch_em_hk(code[2:], name)
+                    if em:
+                        stocks.append(em)
+            self.send_json(stocks)
+        elif self.path == "/api/sectors":
+            sectors = fetch_sectors()
+            self.send_json(sectors)
+        elif self.path == "/api/news":
+            news = gen_news()
+            self.send_json(news)
+        elif self.path == "/api/advice":
+            stocks = fetch_sina_stocks()
+            for code, name, m, t in STOCK_POOL:
+                if code in ("hk00100", "hk02526"):
+                    em = fetch_em_hk(code[2:], name)
+                    if em:
+                        stocks.append(em)
+            advice = gen_advice(stocks)
+            self.send_json(advice)
+        elif self.path == "/":
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.end_headers()
+            self.wfile.write(b"Dashboard API Server Running\n")
+        else:
+            self.send_error(404)
+
+    def send_json(self, data):
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode("utf-8"))
+
+    def log_message(self, fmt, *args):
+        pass  # 静默日志
+
+def main():
+    print(f"🚀 Dashboard API Server starting on {HOST}:{PORT}...")
+    server = HTTPServer((HOST, PORT), Handler)
+    print(f"✅ Server ready!")
+    print(f"📍 API: http://localhost:{PORT}/api/stocks")
+    server.serve_forever()
+
+if __name__ == "__main__":
+    main()

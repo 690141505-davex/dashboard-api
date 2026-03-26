@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>📈 智能盯盘仪表盘</title>
+<style>
+:root{--bg:#0a0e1a;--c:#111827;--c2:#1a2235;--bd:#1f2d45;--tx:#e2e8f0;--dm:#94a3b8;--up:#ef4444;--upb:rgba(239,68,68,.12);--dn:#22c55e;--dnb:rgba(34,197,94,.12);--ft:#64748b;--ftb:rgba(100,116,139,.12);--wn:#f59e0b;--wnb:rgba(245,158,11,.12);--bl:#3b82f6;--hot:#f43f5e;--war:#fb923c}
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:'PingFang SC','Microsoft YaHei',sans-serif;background:var(--bg);color:var(--tx);min-height:100vh}
+a{color:var(--bl)}
+header{background:linear-gradient(135deg,#0f172a,#1e1b4b);padding:13px 20px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd);position:sticky;top:0;z-index:100}
+header h1{font-size:17px;font-weight:700}
+.hdr{display:flex;align-items:center;gap:11px}
+.dt{font-size:12px;color:var(--dm);text-align:right;line-height:1.7}
+.dt strong{color:var(--bl);font-size:14px}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:3px;background:var(--dn);animation:pd 2s infinite}
+@keyframes pd{0%,100%{opacity:1}50%{opacity:.5;transform:scale(.8)}}
+.btn{background:var(--bl);color:#fff;padding:6px 13px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;border:none;transition:.2s}
+.btn:hover{background:#2563eb}.btn:disabled{opacity:.5;cursor:not-allowed}
+.mbar{display:flex;gap:7px;padding:8px 15px;background:var(--c2);border-bottom:1px solid var(--bd)}
+.mi{flex:1;text-align:center;padding:7px 5px;border-radius:9px;font-size:11px}
+.mi.up{background:var(--upb);color:var(--up)}.mi.dn{background:var(--dnb);color:var(--dn)}.mi.ft{background:var(--ftb);color:var(--ft)}
+.mi strong{display:block;font-size:14px;margin-bottom:1px}
+.dash{display:grid;grid-template-columns:350px 1fr 290px;gap:13px;padding:13px;max-width:1850px;margin:0 auto}
+@media(max-width:1300px){.dash{grid-template-columns:1fr 1fr}}
+@media(max-width:768px){.dash{grid-template-columns:1fr}}
+.c{background:var(--c);border:1px solid var(--bd);border-radius:13px;overflow:hidden}
+.ch{padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid var(--bd);background:var(--c2)}
+.ch h2{font-size:12px;font-weight:700;display:flex;align-items:center;gap:6px}
+.bd{background:rgba(255,255,255,.04);color:var(--dm);padding:2px 7px;border-radius:9px;font-size:10px;font-weight:400}
+.tb{display:flex;gap:4px;padding:7px 10px;background:var(--c2);border-bottom:1px solid var(--bd)}
+.tb button{flex:1;padding:4px 4px;border:none;background:transparent;color:var(--dm);font-size:11px;font-weight:600;border-radius:7px;cursor:pointer;transition:.15s}
+.tb button.on{background:var(--bl);color:#fff}
+.tb button:hover:not(.on){background:rgba(255,255,255,.04);color:var(--tx)}
+.upd{font-size:10px;color:var(--dm);padding:4px 14px;background:var(--c2);border-bottom:1px solid var(--bd)}
+.sn{width:100%;border-collapse:collapse;font-size:12px}
+.sn th{text-align:left;padding:5px 9px;color:var(--dm);font-size:10px;font-weight:500;border-bottom:1px solid var(--bd)}
+.sn td{padding:6px 9px;border-bottom:1px solid rgba(255,255,255,.03);vertical-align:middle}
+.sn tr:hover td{background:rgba(255,255,255,.03)}
+.sn tr:last-child td{border-bottom:none}
+.nm{font-weight:600;font-size:12px}.cd{font-size:10px;color:var(--dm)}
+.pr{font-weight:700;font-size:14px}
+.chg{font-weight:700;font-size:12px}.up{color:var(--up)}.dn{color:var(--dn)}.ft{color:var(--ft)}
+.sg{display:inline-block;padding:2px 6px;border-radius:5px;font-size:10px;font-weight:700;white-space:nowrap}
+.sg.sb{background:var(--upb);color:var(--up);border:1px solid rgba(239,68,68,.25)}
+.sg.bu{background:var(--wnb);color:var(--wn);border:1px solid rgba(245,158,11,.25)}
+.sg.hd{background:var(--ftb);color:var(--ft);border:1px solid rgba(100,116,139,.25)}
+.sg.sl{background:rgba(245,158,11,.12);color:#fb923c;border:1px solid rgba(251,146,60,.25)}
+.sg.ss{background:var(--upb);color:var(--up);border:1px solid rgba(239,68,68,.25)}
+.sg.ho{background:var(--dnb);color:var(--dn);border:1px solid rgba(34,197,94,.25)}
+.sg.nd{background:rgba(255,255,255,.04);color:var(--dm)}
+.slst{display:flex;flex-direction:column;gap:7px;padding:8px 12px}
+.si{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--c2);border-radius:9px;border-left:3px solid transparent;transition:.15s}
+.si:hover{transform:translateX(2px)}.si.ht{border-left-color:var(--hot)}.si.wr{border-left-color:var(--war)}
+.sL{display:flex;flex-direction:column;gap:2px;max-width:63%}
+.sN{font-weight:600;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sL2{font-size:10px;color:var(--dm)}
+.sR{text-align:right;flex-shrink:0;margin-left:7px}
+.sC{font-weight:700;font-size:13px}.sC.up{color:var(--up)}.sC.dn{color:var(--dn)}.sC.ft{color:var(--ft)}
+.sLv{font-size:10px;padding:1px 5px;border-radius:4px;margin-top:2px;display:inline-block}
+.sLv.ht{background:rgba(244,63,94,.15);color:var(--hot)}
+.sLv.wr{background:rgba(251,146,60,.15);color:var(--war)}
+.sLv.nm{background:rgba(255,255,255,.04);color:var(--dm)}
+.nf{max-height:340px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--bd) transparent}
+.ni{display:flex;gap:9px;padding:8px 13px;border-bottom:1px solid rgba(255,255,255,.03);align-items:flex-start}
+.ni:last-child{border-bottom:none}
+.dt{width:6px;height:6px;border-radius:50%;margin-top:5px;flex-shrink:0}
+.dt.ps{background:var(--dn)}.dt.ng{background:var(--up)}.dt.ne{background:var(--ft)}
+.tx{font-size:12px;line-height:1.6}.tm{font-size:10px;color:var(--dm);margin-top:2px}
+.alst{display:flex;flex-direction:column;gap:8px;padding:10px 14px}
+.ai{padding:10px 12px;border-radius:9px;border-left:4px solid}
+.ai.bu{background:var(--upb);border-color:var(--up)}
+.ai.sl{background:var(--wnb);border-color:var(--wn)}
+.ai.hd{background:var(--ftb);border-color:var(--ft)}
+.ai.inf{background:rgba(59,130,246,.1);border-color:var(--bl)}
+.at{font-size:11px;font-weight:700;margin-bottom:4px;opacity:.8}
+.ai.bu .at{color:var(--up)}.ai.sl .at{color:var(--wn)}.ai.hd .at{color:var(--ft)}.ai.inf .at{color:var(--bl)}
+.atx{font-size:12px;line-height:1.6}
+.cb{padding:9px}
+.igrid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ic{background:var(--c2);border-radius:9px;padding:10px;border:1px solid var(--bd);text-align:center}
+.it{font-size:10px;color:var(--dm);margin-bottom:3px}
+.ip{font-size:15px;font-weight:800;margin-bottom:1px}
+.icg{font-size:12px;font-weight:700}
+.icg.up{color:var(--up)}.icg.dn{color:var(--dn)}.icg.ft{color:var(--ft)}
+.ld{text-align:center;padding:26px;color:var(--dm);font-size:13px}
+.ld::after{content:'';display:inline-block;width:16px;height:16px;border:2px solid var(--bd);border-top-color:var(--bl);border-radius:50%;animation:sp .8s linear infinite;vertical-align:middle;margin-left:8px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.nd{color:var(--dm);font-size:11px;text-align:center;padding:18px}
+.warn{background:rgba(251,146,60,.15);border:1px solid rgba(251,146,60,.3);color:#fb923c;padding:10px 14px;border-radius:9px;margin:10px 14px;font-size:12px}
+</style>
+</head>
+<body>
+<header>
+  <h1>📈 智能盯盘仪表盘</h1>
+  <div class="hdr">
+    <div class="dt"><strong id="tstr">--:--:--</strong><div id="dstr">----年--月--日</div></div>
+    <button class="btn" id="rbtn" onclick="doRefresh()">🔄 刷新</button>
+  </div>
+</header>
+<div class="mbar" id="mbar"><div class="ld" style="width:100%;padding:10px">加载中...</div></div>
+<div class="dash">
+  <div class="c">
+    <div class="ch"><h2>⭐ 自选股 <span class="bd" id="scnt">--</span></h2></div>
+    <div class="tb">
+      <button class="on" onclick="fS('全部')">全部</button>
+      <button onclick="fS('A股')">🇨🇳 A股</button>
+      <button onclick="fS('港股')">🇭🇰 港股</button>
+      <button onclick="fS('美股')">🇺🇸 美股</button>
+      <button onclick="fS('商品')">🛢️ 商品</button>
+    </div>
+    <div class="upd"><span class="dot"></span>上次更新：<span id="lupd">--:--:--</span></div>
+    <div id="slst"><div class="ld">正在加载行情...</div></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:13px">
+    <div class="c"><div class="ch"><h2>🎯 交易建议 <span class="bd">AI分析</span></h2></div><div class="alst" id="alist"><div class="ld">分析中...</div></div></div>
+    <div class="c"><div class="ch"><h2>🔥 热门板块 <span class="bd" id="secnt">--</span></h2></div><div class="slst" id="selst"><div class="ld">加载中...</div></div></div>
+    <div class="c"><div class="ch"><h2>📰 市场快讯 <span class="bd" id="nwnt">--</span></h2></div><div class="nf" id="nwst"><div class="ld">加载中...</div></div></div>
+  </div>
+  <div style="display:flex;flex-direction:column;gap:13px">
+    <div class="c"><div class="ch"><h2>🇨🇳 A股大盘</h2></div><div class="cb" id="aidx"><div class="ld">加载中...</div></div></div>
+    <div class="c"><div class="ch"><h2>🇭🇰 港股</h2></div><div class="cb" id="hkidx"><div class="ld">加载中...</div></div></div>
+    <div class="c"><div class="ch"><h2>🇺🇸 美股 & 大宗</h2></div><div class="cb" id="uscm"><div class="ld">加载中...</div></div></div>
+  </div>
+</div>
+<script>
+const ICON={'idx':'📊','stk':'📈','cmd':'🛢'};
+const CC=v=>v>0?'up':v<0?'dn':'ft';
+const AR=v=>v>0?'▲':v<0?'▼':'—';
+const SG=v=>v>0?'+':'';
+const $=id=>document.getElementById(id);
+
+// 🔧 配置：修改这里指向你的云服务 API
+const API='https://YOUR_RAILWAY_URL/api';  // 替换为你的 Railway URL
+
+// ── 时钟 ──
+setInterval(()=>{
+  const n=new Date();
+  $('tstr').textContent=n.toLocaleTimeString('zh-CN',{hour12:false});
+  $('dstr').textContent=n.toLocaleDateString('zh-CN',{year:'numeric',month:'2-digit',day:'2-digit',weekday:'long'});
+},1000);
+
+// ── 渲染 ──
+function rMbar(stocks){
+  const avg=m=>{const a=stocks.filter(s=>s.m===m&&s.p);return a.length?a.reduce((x,y)=>x+y.cp,0)/a.length:0;};
+  const a=avg('A股'),hk=avg('港股'),us=avg('美股');
+  const cc=a=>a>0?'up':a<0?'dn':'ft';
+  $('mbar').innerHTML='<div class="mi '+cc(a)+'"><strong>'+AR(a)+' '+SG(a)+a.toFixed(2)+'%</strong>A股平均</div><div class="mi '+cc(hk)+'"><strong>'+AR(hk)+' '+SG(hk)+hk.toFixed(2)+'%</strong>港股平均</div><div class="mi '+cc(us)+'"><strong>'+AR(us)+' '+SG(us)+us.toFixed(2)+'%</strong>美股平均</div>';
+}
+let curF='全部',allSt=[];
+function fS(market){
+  curF=market;
+  document.querySelectorAll('.tb button').forEach(b=>b.className=b.textContent.includes(market)||(market==='全部'&&b.textContent==='全部')?'on':'');
+  let arr=market==='全部'?allSt:allSt.filter(s=>s.m===market);
+  if(!arr.length){$('slst').innerHTML='<div class="nd">暂无数据</div>';return;}
+  let h='<table class="sn"><thead><tr><th>名称</th><th style="text-align:right">价格</th><th style="text-align:right">涨跌幅</th><th>信号</th></tr></thead><tbody>';
+  for(const s of arr){const c=CC(s.cp),bg=c==='up'?'rgba(239,68,68,.04)':c==='dn'?'rgba(34,197,94,.04)':'transparent';
+    h+='<tr style="background:'+bg+'"><td><span class="nm">'+ICON[s.t]+' '+s.n+'</span><br><span class="cd">'+s.m+' · '+s.code+'</span></td><td style="text-align:right"><span class="pr">'+(s.p||'--')+'</span></td><td style="text-align:right" class="chg '+c+'">'+AR(s.cp)+' '+SG(s.cp)+(s.cp||0).toFixed(2)+'%</td><td><span class="sg '+s.sg+'">'+s.st+'</span></td></tr>';}
+  $('slst').innerHTML=h+'</tbody></table>';
+}
+function rStocks(stocks){allSt=stocks;$('scnt').textContent=stocks.length+'只';$('lupd').textContent=new Date().toLocaleTimeString('zh-CN',{hour12:false});fS(curF);}
+function rIC(stocks,market,el){const a=stocks.filter(s=>s.m===market&&s.p);if(!a.length){$(el).innerHTML='<div class="nd">暂无数据</div>';return;}let h='<div class="igrid">';for(const s of a){const c=CC(s.cp);h+='<div class="ic"><div class="it">'+s.n+'</div><div class="ip">'+(s.p||'--')+'</div><div class="icg '+c+'">'+AR(s.cp)+' '+SG(s.cp)+(s.cp||0).toFixed(2)+'%</div></div>';}$(el).innerHTML=h+'</div>';}
+function rSectors(sectors){$('secnt').textContent=sectors.length+'个';if(!sectors.length){$('selst').innerHTML='<div class="nd">暂无板块数据</div>';return;}let h='';for(const s of sectors.slice(0,15)){const c=CC(s.cp);h+='<div class="si '+s.l+'"><div class="sL"><div class="sN">'+s.n+'</div><div class="sL2">领涨: '+(s.lead||'—')+'</div></div><div class="sR"><div class="sC '+c+'">'+AR(s.cp)+' '+SG(s.cp)+(s.cp||0).toFixed(2)+'%</div><span class="sLv '+s.l+'">'+(s.l==='ht'?'🔥热':s.l==='wr'?'⚡暖':'')+'</span></div></div>';}$('selst').innerHTML=h;}
+function rNews(news){$('nwnt').textContent=news.length+'条';if(!news.length){$('nwst').innerHTML='<div class="nd">暂无数据</div>';return;}let h='';for(const n of news)h+='<div class="ni"><span class="dt '+n.tp+'"></span><div><div class="tx">'+n.t+'</div><div class="tm">'+(n.ts||'')+'</div></div></div>';$('nwst').innerHTML=h;}
+function rAdvice(advice){if(!advice||!advice.length){$('alist').innerHTML='<div class="nd">暂无建议</div>';return;}const lb={bu:'💹 买入建议',sl:'⚠️ 风险提示',hd:'⏸️ 观望建议',inf:'ℹ️ 盘中参考'};const tc={bu:'bu',sl:'sl',hd:'hd',inf:'inf'};let h='<div class="alst">';for(const a of advice){const t=tc[a.tp]||'inf';h+='<div class="ai '+t+'"><div class="at">'+(lb[a.tp]||'ℹ️ 建议')+' · '+(a.ts||'')+'</div><div class="atx">'+a.t+'</div></div>';}$('alist').innerHTML=h+'</div>';}
+
+// ── 主刷新 ──
+let busy=false;
+async function doRefresh(){
+  if(busy)return;busy=true;
+  const btn=$('rbtn');btn.textContent='⏳ 刷新中...';btn.disabled=true;
+  try{
+    const [stocks,sectors,news,advice]=await Promise.all([
+      fetch(API+'/stocks').then(r=>r.json()).catch(e=>{console.error('stocks:',e);return[];}),
+      fetch(API+'/sectors').then(r=>r.json()).catch(e=>{console.error('sectors:',e);return[];}),
+      fetch(API+'/news').then(r=>r.json()).catch(e=>{console.error('news:',e);return[];}),
+      fetch(API+'/advice').then(r=>r.json()).catch(e=>{console.error('advice:',e);return[];}),
+    ]);
+    rMbar(stocks);rStocks(stocks);rIC(stocks,'A股','aidx');rIC(stocks,'港股','hkidx');
+    const usSt=stocks.filter(s=>s.m==='美股'&&s.p),cmSt=stocks.filter(s=>s.m==='商品'&&s.p);
+    rIC([...usSt,...cmSt],'','uscm');
+    rSectors(sectors);rNews(news);rAdvice(advice);
+  }catch(e){console.error('刷新失败:',e);}
+  finally{busy=false;btn.textContent='🔄 刷新';btn.disabled=false;}
+}
+
+// ── 启动 ──
+doRefresh();
+setInterval(doRefresh,30000);
+</script>
+</body>
+</html>
