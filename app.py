@@ -14,6 +14,13 @@ from urllib.request import urlopen, Request
 from urllib.error import URLError
 import ssl
 import threading
+import traceback
+
+try:
+    import akshare as ak
+    HAS_AK = True
+except ImportError:
+    HAS_AK = False
 
 PORT = int(os.environ.get("PORT", 8000))
 HOST = "0.0.0.0"
@@ -228,34 +235,143 @@ def fetch_em_hk(code, name):
         print(f"[EM港股 {code}] {e}")
         return None
 
-# ── 快讯 ──
+# ── 快讯（真实新闻源，72小时内） ──
+def _classify_news(text):
+    """根据新闻内容判断情绪"""
+    pos_kws = ["涨", "强", "净买入", "反弹", "突破", "超预期", "创新高", "大涨", "利好", "增持", "看涨"]
+    neg_kws = ["跌", "回调", "减", "净流出", "风险", "大跌", "利空", "减持", "看跌", "警示", "警告"]
+    pos = sum(1 for k in pos_kws if k in text)
+    neg = sum(1 for k in neg_kws if k in text)
+    if pos > neg:
+        return "ps"
+    elif neg > pos:
+        return "ng"
+    return "ne"
+
+
+def _fetch_real_news(max_items=8, max_age_hours=72):
+    """从真实来源抓取近期财经快讯"""
+    now     = datetime.datetime.now()
+    ts      = now.strftime("%H:%M")
+    cutoff  = now - datetime.timedelta(hours=max_age_hours)
+    results = []
+
+    # ── 来源1: 财新财经快讯 (akshare) ──
+    if HAS_AK:
+        try:
+            df = ak.stock_news_main_cx()
+            if df is not None and len(df) > 0:
+                import re
+                for _, row in df.iterrows():
+                    summary = str(row.get("summary", ""))
+                    tag     = str(row.get("tag", ""))
+                    url     = str(row.get("url", ""))
+                    if not summary or len(summary) < 10:
+                        continue
+                    item_date_str = ""
+                    try:
+                        m = re.search(r"(\d{4}-\d{2}-\d{2})", url)
+                        if m:
+                            item_date_str = m.group(1)
+                            item_date = datetime.datetime.strptime(item_date_str, "%Y-%m-%d")
+                            if item_date < cutoff:
+                                continue
+                    except Exception:
+                        pass
+
+                    title = summary[:100].strip()
+                    results.append({
+                        "text": f"【{tag}】{title}",
+                        "time": item_date_str[-5:] if item_date_str else ts,
+                        "tp":   _classify_news(summary),
+                        "src":  "财新",
+                    })
+        except Exception as e:
+            print(f"[新闻-财新] {e}")
+
+    # ── 来源2: 东方财富公告快讯 ──
+    try:
+        import requests
+        em_url = (
+            "https://np-anotice-stock.eastmoney.com/api/security/ann"
+            "?cb=jQuery&sr=-1&page_size=20&page_index=1"
+            "&ann_type=SHA,CYB,SZA&client_source=web&f_node=0&s_node=0"
+        )
+        resp = requests.get(em_url, timeout=8, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://www.eastmoney.com",
+        })
+        text2 = resp.text
+        import re
+        json_str = re.sub(r"^jQuery\(", "", text2.rstrip().rstrip(")"))
+        data = json.loads(json_str)
+        for item in data.get("data", {}).get("list", []):
+            title      = str(item.get("title_ch", item.get("title", "")))
+            notice_date = str(item.get("notice_date", ""))[:10]
+            codes_list = item.get("codes", [])
+            col_name = ""
+            for c in codes_list:
+                col_name = str(c.get("column_name", ""))
+                break
+            if len(title) < 10:
+                continue
+            try:
+                nd = datetime.datetime.strptime(notice_date, "%Y-%m-%d")
+                if nd < cutoff:
+                    continue
+            except Exception:
+                pass
+            prefix = col_name if col_name else "公告速递"
+            results.append({
+                "text": f"【{prefix}】{title[:80]}",
+                "time": notice_date[-5:] if notice_date else ts,
+                "tp":   _classify_news(title),
+                "src":  "东方财富",
+            })
+    except Exception as e:
+        print(f"[新闻-东财] {e}")
+
+    # ── 去重 ──
+    seen = set()
+    deduped = []
+    for item in results:
+        key = item["text"][:60]
+        if key not in seen:
+            seen.add(key)
+            deduped.append(item)
+
+    deduped.sort(key=lambda x: x.get("time", "00:00"), reverse=True)
+    return deduped[:max_items]
+
+
 def gen_news():
-    now = datetime.datetime.now()
-    ts = now.strftime("%H:%M")
-    h = now.hour
-    pool = [
-        "DeepSeek/国产大模型持续发酵，算力需求爆发式增长",
-        "消费电子板块走强，AI手机换机潮预期持续升温",
-        "新能源储能板块反弹，政策+订单双轮驱动",
-        "市场成交额有所放大，结构性行情延续",
-        "南向资金持续净买入，腾讯、阿里获机构青睐",
-        "恒生科技震荡上行，互联网龙头估值修复进行中",
-        "内房股企稳，政策托底信号持续释放",
-        "英伟达Blackwell芯片需求超预期，AI产业链持续受益",
-        "特斯拉自动驾驶出租车商业化加速推进",
-        "美联储降息预期升温，科技股估值支撑较强",
-        "COMEX黄金高位震荡，避险需求提供下方支撑",
-        "WTI原油突破80美元，OPEC+减产持续推进",
-        "铜价回调，新能源需求长期支撑逻辑仍在",
-        "央行逆回购净投放，维护流动性合理充裕",
-        "OpenAI/Anthropic竞争加剧，AI应用端持续爆发",
+    """返回格式兼容的新闻列表"""
+    now       = datetime.datetime.now()
+    ts        = now.strftime("%H:%M")
+    news_items = _fetch_real_news(max_items=8, max_age_hours=72)
+
+    if not news_items:
+        print("[新闻] 真实来源为空，使用备用池")
+        pool = [
+            "DeepSeek/国产大模型持续发酵，算力需求爆发式增长",
+            "消费电子板块走强，AI手机换机潮预期持续升温",
+            "新能源储能板块反弹，政策+订单双轮驱动",
+            "南向资金持续净买入，腾讯、阿里获机构青睐",
+            "英伟达Blackwell芯片需求超预期，AI产业链持续受益",
+            "美联储降息预期升温，科技股估值支撑较强",
+            "COMEX黄金高位震荡，避险需求提供下方支撑",
+            "WTI原油突破80美元，OPEC+减产持续推进",
+        ]
+        h = now.hour
+        random.seed(h * 60 + now.minute)
+        selected = random.sample(pool, min(8, len(pool)))
+        random.seed()
+        return [{"tp": _classify_news(t), "t": t, "ts": ts} for t in selected]
+
+    return [
+        {"tp": item["tp"], "t": item["text"], "ts": item.get("time", ts)}
+        for item in news_items
     ]
-    random.seed(h * 60 + now.minute)
-    selected = random.sample(pool, min(8, len(pool)))
-    random.seed()
-    type_fn = lambda t: "ps" if any(k in t for k in ["涨", "强", "净买入", "反弹", "突破", "超预期"]) else \
-                        "ng" if any(k in t for k in ["跌", "回调", "减", "净流出", "风险"]) else "ne"
-    return [{"tp": type_fn(t), "t": t, "ts": ts} for t in selected]
 
 # ── 建议 ──
 def gen_advice(stocks):
