@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-盯盘仪表盘 - 云部署版本
-支持 Railway、Heroku、Render 等平台
+盯盘仪表盘 - 轻量级 API 代理服务器
+为前端提供跨域数据中转，解决 CORS 问题
 """
 
 import os
@@ -21,9 +21,10 @@ try:
     HAS_AK = True
 except ImportError:
     HAS_AK = False
+    print("[提示] akshare 未安装，新闻功能将使用备用源")
 
-PORT = int(os.environ.get("PORT", 8000))
-HOST = "0.0.0.0"
+PORT = 9999
+WORKSPACE = "/Users/zhangxiang/Desktop/AI work"
 
 # ── 股票池 ──
 STOCK_POOL = [
@@ -239,11 +240,12 @@ def fetch_em_hk(code, name):
         print(f"[EM港股 {code}] {e}")
         return None
 
-# ── 快讯（真实新闻源，72小时内） ──
+# ── 快讯（真实新闻源） ──
 def _classify_news(text):
     """根据新闻内容判断情绪"""
     pos_kws = ["涨", "强", "净买入", "反弹", "突破", "超预期", "创新高", "大涨", "利好", "增持", "看涨"]
     neg_kws = ["跌", "回调", "减", "净流出", "风险", "大跌", "利空", "减持", "看跌", "警示", "警告"]
+    # 计算正负关键词命中次数
     pos = sum(1 for k in pos_kws if k in text)
     neg = sum(1 for k in neg_kws if k in text)
     if pos > neg:
@@ -255,9 +257,9 @@ def _classify_news(text):
 
 def _fetch_real_news(max_items=8, max_age_hours=72):
     """从真实来源抓取近期财经快讯"""
-    now     = datetime.datetime.now()
-    ts      = now.strftime("%H:%M")
-    cutoff  = now - datetime.timedelta(hours=max_age_hours)
+    now = datetime.datetime.now()
+    ts  = now.strftime("%H:%M")
+    cutoff = datetime.datetime.now() - datetime.timedelta(hours=max_age_hours)
     results = []
 
     # ── 来源1: 财新财经快讯 (akshare) ──
@@ -265,15 +267,17 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
         try:
             df = ak.stock_news_main_cx()
             if df is not None and len(df) > 0:
-                import re
                 for _, row in df.iterrows():
                     summary = str(row.get("summary", ""))
                     tag     = str(row.get("tag", ""))
                     url     = str(row.get("url", ""))
                     if not summary or len(summary) < 10:
                         continue
+                    # 提取时间（从URL中取日期）
                     item_date_str = ""
                     try:
+                        # URL格式: https://database.caixin.com/YYYY-MM-DD/...
+                        import re
                         m = re.search(r"(\d{4}-\d{2}-\d{2})", url)
                         if m:
                             item_date_str = m.group(1)
@@ -281,8 +285,9 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
                             if item_date < cutoff:
                                 continue
                     except Exception:
-                        pass
+                        pass  # 解析失败不丢弃，过滤掉没有日期的行
 
+                    # 标题简短（取summary前80字）
                     title = summary[:100].strip()
                     results.append({
                         "text": f"【{tag}】{title}",
@@ -293,7 +298,7 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
         except Exception as e:
             print(f"[新闻-财新] {e}")
 
-    # ── 来源2: 东方财富公告快讯 ──
+    # ── 来源2: 东方财富监管/公告快讯 (直接HTTP) ──
     try:
         import requests
         em_url = (
@@ -301,19 +306,21 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
             "?cb=jQuery&sr=-1&page_size=20&page_index=1"
             "&ann_type=SHA,CYB,SZA&client_source=web&f_node=0&s_node=0"
         )
-        resp = requests.get(em_url, timeout=8, headers={
-            "User-Agent": "Mozilla/5.0",
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
             "Referer": "https://www.eastmoney.com",
-        })
-        text2 = resp.text
+        }
+        resp = requests.get(em_url, timeout=8, headers=headers)
+        text = resp.text
         import re
-        json_str = re.sub(r"^jQuery\(", "", text2.rstrip().rstrip(")"))
+        # 解析 jQuery JSONP
+        json_str = re.sub(r"^jQuery\(", "", text.rstrip().rstrip(")"))
         data = json.loads(json_str)
         for item in data.get("data", {}).get("list", []):
-            title      = str(item.get("title_ch", item.get("title", "")))
+            title   = str(item.get("title_ch", item.get("title", "")))
             notice_date = str(item.get("notice_date", ""))[:10]
-            codes_list = item.get("codes", [])
-            col_name = ""
+            codes_list  = item.get("codes", [])
+            col_name    = ""
             for c in codes_list:
                 col_name = str(c.get("column_name", ""))
                 break
@@ -325,6 +332,7 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
                     continue
             except Exception:
                 pass
+
             prefix = col_name if col_name else "公告速递"
             results.append({
                 "text": f"【{prefix}】{title[:80]}",
@@ -335,26 +343,29 @@ def _fetch_real_news(max_items=8, max_age_hours=72):
     except Exception as e:
         print(f"[新闻-东财] {e}")
 
-    # ── 去重 ──
+    # ── 去重 & 按时间排序 ──
     seen = set()
     deduped = []
     for item in results:
-        key = item["text"][:60]
+        key = item["text"][:60]  # 按前60字去重
         if key not in seen:
             seen.add(key)
             deduped.append(item)
 
+    # 按时间倒序，取最新的
     deduped.sort(key=lambda x: x.get("time", "00:00"), reverse=True)
     return deduped[:max_items]
 
 
 def gen_news():
     """返回格式兼容的新闻列表"""
-    now       = datetime.datetime.now()
-    ts        = now.strftime("%H:%M")
+    now = datetime.datetime.now()
+    ts  = now.strftime("%H:%M")
+
     news_items = _fetch_real_news(max_items=8, max_age_hours=72)
 
     if not news_items:
+        # 兜底：3天内硬编码快讯
         print("[新闻] 真实来源为空，使用备用池")
         pool = [
             "DeepSeek/国产大模型持续发酵，算力需求爆发式增长",
@@ -429,11 +440,6 @@ class Handler(BaseHTTPRequestHandler):
                         stocks.append(em)
             advice = gen_advice(stocks)
             self.send_json(advice)
-        elif self.path == "/":
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.end_headers()
-            self.wfile.write(b"Dashboard API Server Running\n")
         else:
             self.send_error(404)
 
@@ -449,10 +455,12 @@ class Handler(BaseHTTPRequestHandler):
         pass  # 静默日志
 
 def main():
-    print(f"🚀 Dashboard API Server starting on {HOST}:{PORT}...")
-    server = HTTPServer((HOST, PORT), Handler)
-    print(f"✅ Server ready!")
-    print(f"📍 API: http://localhost:{PORT}/api/stocks")
+    print("🚀 盯盘代理服务启动...")
+    server = HTTPServer(("127.0.0.1", PORT), Handler)
+    print(f"✅ 服务已就绪！")
+    print(f"📍 API 地址：http://localhost:{PORT}/api/stocks")
+    print(f"📍 前端访问：http://localhost:9999/api/stocks 等")
+    print(f"\n按 Ctrl+C 停止服务\n")
     server.serve_forever()
 
 if __name__ == "__main__":
